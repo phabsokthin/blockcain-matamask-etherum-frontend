@@ -1,69 +1,1194 @@
-import Image from "next/image";
+"use client";
+
+import {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  FormEvent,
+  useSyncExternalStore,
+} from "react";
+import dynamic from "next/dynamic";
+import { BrowserProvider, formatEther, isAddress, Wallet } from "ethers";
+import { CONTRACT_ADDRESS, getSepoliaJsonRpcProvider } from "./lib/contract";
+import { sendETH } from "./lib/contractActions";
+import {
+  DraftWalletInfo,
+  EthereumRpcError,
+  PRIVATE_KEY,
+  SEPOLIA_CONFIG,
+  STORAGE_KEY_ACTIVE_ADDR,
+  STORAGE_KEY_DISCONNECTED,
+  clearInAppWalletsFromStorage,
+  getAllMetaMaskAccounts,
+  getPrivateKeyForAddress,
+  getStoredInAppWallets,
+  parseWalletError,
+  saveInAppWalletToStorage,
+  setActiveInAppWalletAddress,
+  subscribeMetaMask,
+  subscribeStorage,
+} from "./types/wallet";
+
+import Navbar from "./components/Navbar";
+import LandingCard from "./components/LandingCard";
+import TransferForm from "./components/TransferForm";
+import AccountView from "./components/AccountView";
+
+// Dynamic Modal Components (Client-side dynamic import)
+const TransferConfirmModal = dynamic(
+  () => import("./components/TransferConfirmModal"),
+  { ssr: false }
+);
+const KeyRevealConfirmModal = dynamic(
+  () => import("./components/KeyRevealConfirmModal"),
+  { ssr: false }
+);
+const WalletModal = dynamic(
+  () => import("./components/WalletModal"),
+  { ssr: false }
+);
 
 export default function Home() {
+  // Check if MetaMask is available without hydration mismatch
+  const hasMetaMask = useSyncExternalStore(
+    subscribeMetaMask,
+    () => Boolean(typeof window !== "undefined" && window.ethereum),
+    () => false
+  );
+
+  // Check if saved in-app wallets exist in browser storage
+  const hasSavedInAppWallets = useSyncExternalStore(
+    subscribeStorage,
+    () => Boolean(typeof window !== "undefined" && getStoredInAppWallets().length > 0),
+    () => false
+  );
+
+  // Wallet Connection State
+  const [account, setAccount] = useState<string>("");
+  const [allAccounts, setAllAccounts] = useState<string[]>([]);
+  const [walletType, setWalletType] = useState<"metamask" | "in_app" | null>(null);
+  const [inAppWallet, setInAppWallet] = useState<Wallet | null>(null);
+  const [ensName, setEnsName] = useState<string | null>(null);
+  const [balance, setBalance] = useState<string>("0");
+  const [chainId, setChainId] = useState<string>("");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isSwitchingChain, setIsSwitchingChain] = useState<boolean>(false);
+  const [isSwitchingAccount, setIsSwitchingAccount] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string>("");
+  const [logoutNotice, setLogoutNotice] = useState<string>("");
+  const [hasCopied, setHasCopied] = useState<boolean>(false);
+
+  // Tab State: "transfer" or "account"
+  const [activeTab, setActiveTab] = useState<"transfer" | "account">("transfer");
+
+  // Transfer Form State
+  const [recipient, setRecipient] = useState<string>("");
+  const [transferAmount, setTransferAmount] = useState<string>("");
+  const [isTransferring, setIsTransferring] = useState<boolean>(false);
+  const [transferStatus, setTransferStatus] = useState<
+    "idle" | "broadcasting" | "confirming" | "success" | "error"
+  >("idle");
+  const [txHash, setTxHash] = useState<string>("");
+  const [transferErrorMessage, setTransferErrorMessage] = useState<string>("");
+
+  // Frontend Confirmation Modal State
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState<boolean>(false);
+  const [frontendSignerKeyInput, setFrontendSignerKeyInput] = useState<string>("");
+  const [showFrontendKeyPrompt, setShowFrontendKeyPrompt] = useState<boolean>(false);
+
+  // Frontend Registration / Connect Modal State
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [modalTab, setModalTab] = useState<"register" | "import" | "metamask">("register");
+  const [modalNotice, setModalNotice] = useState<string>("");
+  const [draftWallet, setDraftWallet] = useState<DraftWalletInfo | null>(null);
+
+  // Registration with Password State (MetaMask Keystore compatible)
+  const [regStep, setRegStep] = useState<"password" | "ready">("password");
+  const [regPassword, setRegPassword] = useState<string>("");
+  const [regConfirmPassword, setRegConfirmPassword] = useState<string>("");
+  const [showRegPassword, setShowRegPassword] = useState<boolean>(false);
+  const [regPasswordError, setRegPasswordError] = useState<string>("");
+  const [isEncrypting, setIsEncrypting] = useState<boolean>(false);
+  const [hasDownloadedKeystore, setHasDownloadedKeystore] = useState<boolean>(false);
+  const [showAlternativeBackup, setShowAlternativeBackup] = useState<boolean>(true);
+
+  const [hasBackedUpKey, setHasBackedUpKey] = useState<boolean>(false);
+  const [showDraftPrivateKey, setShowDraftPrivateKey] = useState<boolean>(false);
+  const [hasCopiedDraftAddress, setHasCopiedDraftAddress] = useState<boolean>(false);
+  const [hasCopiedDraftKey, setHasCopiedDraftKey] = useState<boolean>(false);
+  const [hasCopiedDraftKeyRaw, setHasCopiedDraftKeyRaw] = useState<boolean>(false);
+  const [hasCopiedDraftSeed, setHasCopiedDraftSeed] = useState<boolean>(false);
+  const [hasCopiedPassword, setHasCopiedPassword] = useState<boolean>(false);
+
+  // Import Tab State
+  const [importMode, setImportMode] = useState<"key" | "keystore">("key");
+  const [importKeyInput, setImportKeyInput] = useState<string>("");
+  const [importKeystoreInput, setImportKeystoreInput] = useState<string>("");
+  const [importPasswordInput, setImportPasswordInput] = useState<string>("");
+  const [importError, setImportError] = useState<string>("");
+
+  // Export Key State in Wallet Tab
+  const [showExportedKey, setShowExportedKey] = useState<boolean>(false);
+  const [hasCopiedExportedKey, setHasCopiedExportedKey] = useState<boolean>(false);
+  const [hasCopiedExportedKeyRaw, setHasCopiedExportedKeyRaw] = useState<boolean>(false);
+
+  // Show/Hide Private Key State for Selected Account with Confirmation
+  const [showSelectedAccountKey, setShowSelectedAccountKey] = useState<boolean>(false);
+  const [isKeyConfirmModalOpen, setIsKeyConfirmModalOpen] = useState<boolean>(false);
+  const [hasCopiedSelectedKey, setHasCopiedSelectedKey] = useState<boolean>(false);
+  const [hasCopiedSelectedKeyRaw, setHasCopiedSelectedKeyRaw] = useState<boolean>(false);
+  const [showTransferConfirmKey, setShowTransferConfirmKey] = useState<boolean>(false);
+
+  // Keep refs to avoid stale closures in event listeners
+  const accountRef = useRef(account);
+  useEffect(() => {
+    accountRef.current = account;
+  }, [account]);
+
+  const walletTypeRef = useRef(walletType);
+  useEffect(() => {
+    walletTypeRef.current = walletType;
+  }, [walletType]);
+
+  // Derived state
+  const isConnected = Boolean(account);
+  const isSepolia =
+    walletType === "in_app" ||
+    chainId.toLowerCase() === SEPOLIA_CONFIG.chainIdHex.toLowerCase();
+
+  const accountIndex = useMemo(() => {
+    if (!account || allAccounts.length === 0) return 0;
+    const foundIndex = allAccounts.findIndex(
+      (acc) => acc.toLowerCase() === account.toLowerCase()
+    );
+    return foundIndex >= 0 ? foundIndex : 0;
+  }, [account, allAccounts]);
+
+  const selectedAccountPrivateKey = useMemo(() => {
+    return getPrivateKeyForAddress(account, accountIndex);
+  }, [account, accountIndex]);
+
+  const displayName = useMemo(() => {
+    if (ensName) return ensName;
+    return `Account ${accountIndex + 1}`;
+  }, [ensName, accountIndex]);
+
+  // Validation
+  const trimmedRecipient = recipient.trim();
+  const isValidRecipient = Boolean(
+    trimmedRecipient && isAddress(trimmedRecipient)
+  );
+  const isSelfTransfer = Boolean(
+    isValidRecipient &&
+      account &&
+      trimmedRecipient.toLowerCase() === account.toLowerCase()
+  );
+
+  const numericAmount = parseFloat(transferAmount);
+  const numericBalance = parseFloat(balance);
+  const isValidAmount =
+    !isNaN(numericAmount) && numericAmount > 0 && numericAmount <= numericBalance;
+
+  const canTransfer =
+    isConnected &&
+    isSepolia &&
+    isValidRecipient &&
+    isValidAmount &&
+    !isTransferring;
+
+  // Fetch ETH balance and optional ENS name
+  const fetchAccountData = useCallback(
+    async (
+      targetAddress: string,
+      currentWalletType: "metamask" | "in_app" = "in_app"
+    ): Promise<void> => {
+      if (!targetAddress || !isAddress(targetAddress)) return;
+
+      try {
+        if (currentWalletType === "metamask" && window.ethereum) {
+          try {
+            const browserProvider = new BrowserProvider(window.ethereum);
+            const bal = await browserProvider.getBalance(targetAddress);
+            setBalance(formatEther(bal));
+
+            try {
+              const resolvedEns = await browserProvider.lookupAddress(targetAddress);
+              setEnsName(resolvedEns);
+            } catch {
+              setEnsName(null);
+            }
+            return;
+          } catch (ethErr) {
+            console.warn("BrowserProvider getBalance failed, fallback to RPC:", ethErr);
+          }
+        }
+
+        // In-app or fallback RPC provider
+        const rpcProvider = getSepoliaJsonRpcProvider();
+        const bal = await rpcProvider.getBalance(targetAddress);
+        setBalance(formatEther(bal));
+        setEnsName(null);
+      } catch (err: unknown) {
+        console.error("Failed to fetch balance:", err);
+      }
+    },
+    []
+  );
+
+  // Switch network to Sepolia in MetaMask
+  const handleSwitchToSepolia = useCallback(async (): Promise<void> => {
+    if (!window.ethereum) return;
+    try {
+      setIsSwitchingChain(true);
+      setErrorMessage("");
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: SEPOLIA_CONFIG.chainIdHex }],
+      });
+    } catch (switchError: unknown) {
+      const err = switchError as EthereumRpcError;
+      if (err.code === 4902) {
+        try {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [
+              {
+                chainId: SEPOLIA_CONFIG.chainIdHex,
+                chainName: SEPOLIA_CONFIG.name,
+                nativeCurrency: {
+                  name: SEPOLIA_CONFIG.currencyName,
+                  symbol: SEPOLIA_CONFIG.currencySymbol,
+                  decimals: SEPOLIA_CONFIG.decimals,
+                },
+                rpcUrls: SEPOLIA_CONFIG.rpcUrls,
+                blockExplorerUrls: SEPOLIA_CONFIG.blockExplorerUrls,
+              },
+            ],
+          });
+        } catch (addError: unknown) {
+          setErrorMessage(parseWalletError(addError, "Could not add Sepolia network."));
+        }
+      } else {
+        setErrorMessage(parseWalletError(switchError, "Could not switch to Sepolia."));
+      }
+    } finally {
+      setIsSwitchingChain(false);
+    }
+  }, []);
+
+  // Open the registration / connection modal
+  const handleOpenRegisterModal = useCallback(
+    (
+      defaultTab: "register" | "import" | "metamask" = "register",
+      notice: string = ""
+    ) => {
+      setModalTab(defaultTab);
+      setModalNotice(notice);
+      setRegStep("password");
+      setRegPassword("");
+      setRegConfirmPassword("");
+      setRegPasswordError("");
+      setImportError("");
+      setImportKeyInput("");
+      setImportKeystoreInput("");
+      setImportPasswordInput("");
+      setDraftWallet(null);
+      setHasDownloadedKeystore(false);
+      setHasBackedUpKey(false);
+      setShowDraftPrivateKey(false);
+      setIsModalOpen(true);
+    },
+    []
+  );
+
+  // Connect MetaMask wallet
+  const handleConnectMetaMask = useCallback(async (): Promise<void> => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(STORAGE_KEY_DISCONNECTED);
+    }
+    setLogoutNotice("");
+
+    if (!window.ethereum) {
+      setErrorMessage(
+        "MetaMask extension is not detected in your browser. Please install MetaMask from https://metamask.io or test using the 3 Example Accounts demo mode below."
+      );
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      setErrorMessage("");
+
+      const requested = (await window.ethereum.request({
+        method: "eth_requestAccounts",
+      })) as string[];
+
+      if (!requested || requested.length === 0) {
+        throw new Error("No account was selected in MetaMask.");
+      }
+
+      // Discover and list ALL permitted accounts from MetaMask
+      const allMetaMaskAccs = await getAllMetaMaskAccounts();
+      const combinedAccounts = Array.from(
+        new Set([...(requested || []), ...allMetaMaskAccs].map((a) => a.toLowerCase()))
+      ).map((lower) => {
+        return (
+          [...(requested || []), ...allMetaMaskAccs].find(
+            (a) => a.toLowerCase() === lower
+          ) || lower
+        );
+      });
+
+      setAllAccounts(combinedAccounts.length > 0 ? combinedAccounts : requested);
+      const chosenAccount = requested[0];
+      setAccount(chosenAccount);
+      setWalletType("metamask");
+      setInAppWallet(null);
+
+      // Verify chain
+      const currentChain = (await window.ethereum.request({
+        method: "eth_chainId",
+      })) as string;
+      const activeChain = currentChain.toLowerCase();
+      setChainId(activeChain);
+
+      if (activeChain === SEPOLIA_CONFIG.chainIdHex.toLowerCase()) {
+        await fetchAccountData(chosenAccount, "metamask");
+      } else {
+        await handleSwitchToSepolia();
+        await fetchAccountData(chosenAccount, "metamask");
+      }
+      setIsModalOpen(false);
+    } catch (err: unknown) {
+      setErrorMessage(parseWalletError(err, "Could not connect to MetaMask."));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [fetchAccountData, handleSwitchToSepolia]);
+
+  // Complete In-App Registration from frontend popup
+  const handleConfirmRegisterInAppWallet = useCallback((): void => {
+    if (!draftWallet) return;
+
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(STORAGE_KEY_DISCONNECTED);
+    }
+
+    try {
+      const provider = getSepoliaJsonRpcProvider();
+      const newWallet = new Wallet(draftWallet.privateKey, provider);
+
+      saveInAppWalletToStorage({
+        address: draftWallet.address,
+        privateKey: draftWallet.privateKey,
+        label: `Frontend Wallet ${getStoredInAppWallets().length + 1}`,
+        createdAt: Date.now(),
+        keystoreJson: draftWallet.keystoreJson,
+      });
+
+      const updatedStored = getStoredInAppWallets();
+      setAllAccounts(updatedStored.map((w) => w.address));
+
+      setWalletType("in_app");
+      setInAppWallet(newWallet);
+      setAccount(newWallet.address);
+      setChainId(SEPOLIA_CONFIG.chainIdHex);
+      setEnsName(null);
+      setBalance("0");
+      setIsModalOpen(false);
+      setDraftWallet(null);
+      setLogoutNotice("");
+
+      fetchAccountData(newWallet.address, "in_app");
+    } catch (err: unknown) {
+      console.error("Failed to connect registered wallet:", err);
+      setErrorMessage(parseWalletError(err, "Failed to initialize new wallet."));
+    }
+  }, [draftWallet, fetchAccountData]);
+
+  // Generate and encrypt new wallet with password
+  const handleGenerateAndEncryptWallet = async (e: FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (!regPassword || regPassword.length < 6) {
+      setRegPasswordError("Password must be at least 6 characters.");
+      return;
+    }
+    if (regPassword !== regConfirmPassword) {
+      setRegPasswordError("Passwords do not match. Please verify.");
+      return;
+    }
+
+    try {
+      setIsEncrypting(true);
+      setRegPasswordError("");
+
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      const randomWallet = Wallet.createRandom();
+      const keystoreJson = await randomWallet.encrypt(regPassword);
+
+      setDraftWallet({
+        address: randomWallet.address,
+        privateKey: randomWallet.privateKey,
+        mnemonic: randomWallet.mnemonic?.phrase,
+        keystoreJson,
+        password: regPassword,
+      });
+
+      setRegStep("ready");
+    } catch (err: unknown) {
+      console.error("Keystore encryption failed:", err);
+      setRegPasswordError("Failed to encrypt wallet. Please try another password.");
+    } finally {
+      setIsEncrypting(false);
+    }
+  };
+
+  // Import raw private key
+  const handleImportPrivateKey = (): void => {
+    const trimmed = importKeyInput.trim();
+    if (!trimmed) {
+      setImportError("Please enter a private key.");
+      return;
+    }
+
+    const formattedKey = trimmed.startsWith("0x") ? trimmed : `0x${trimmed}`;
+
+    try {
+      const provider = getSepoliaJsonRpcProvider();
+      const imported = new Wallet(formattedKey, provider);
+
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(STORAGE_KEY_DISCONNECTED);
+      }
+
+      saveInAppWalletToStorage({
+        address: imported.address,
+        privateKey: imported.privateKey,
+        label: `Imported Wallet ${getStoredInAppWallets().length + 1}`,
+        createdAt: Date.now(),
+      });
+
+      const updatedStored = getStoredInAppWallets();
+      setAllAccounts(updatedStored.map((w) => w.address));
+
+      setWalletType("in_app");
+      setInAppWallet(imported);
+      setAccount(imported.address);
+      setChainId(SEPOLIA_CONFIG.chainIdHex);
+      setEnsName(null);
+      setIsModalOpen(false);
+      setImportKeyInput("");
+      setLogoutNotice("");
+
+      fetchAccountData(imported.address, "in_app");
+    } catch (err: unknown) {
+      console.error("Import private key error:", err);
+      setImportError("Invalid private key. Must be a valid 32-byte hexadecimal string.");
+    }
+  };
+
+  // Import Keystore JSON + Password
+  const handleImportKeystore = async (): Promise<void> => {
+    const trimmedJson = importKeystoreInput.trim();
+    const trimmedPass = importPasswordInput;
+
+    if (!trimmedJson) {
+      setImportError("Please paste your Keystore JSON content.");
+      return;
+    }
+    if (!trimmedPass) {
+      setImportError("Please enter the password for this Keystore file.");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      setImportError("");
+
+      const provider = getSepoliaJsonRpcProvider();
+      const decrypted = await Wallet.fromEncryptedJson(trimmedJson, trimmedPass);
+      const connected = new Wallet(decrypted.privateKey, provider);
+
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(STORAGE_KEY_DISCONNECTED);
+      }
+
+      saveInAppWalletToStorage({
+        address: connected.address,
+        privateKey: connected.privateKey,
+        label: `Keystore Wallet ${getStoredInAppWallets().length + 1}`,
+        createdAt: Date.now(),
+        keystoreJson: trimmedJson,
+      });
+
+      const updatedStored = getStoredInAppWallets();
+      setAllAccounts(updatedStored.map((w) => w.address));
+
+      setWalletType("in_app");
+      setInAppWallet(connected);
+      setAccount(connected.address);
+      setChainId(SEPOLIA_CONFIG.chainIdHex);
+      setEnsName(null);
+      setIsModalOpen(false);
+      setImportKeystoreInput("");
+      setImportPasswordInput("");
+      setLogoutNotice("");
+
+      fetchAccountData(connected.address, "in_app");
+    } catch (err: unknown) {
+      console.error("Keystore decrypt error:", err);
+      setImportError("Incorrect password or corrupted Keystore JSON file.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Reconnect saved in-app wallet from browser storage
+  const handleReconnectSavedInApp = (): void => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(STORAGE_KEY_DISCONNECTED);
+    }
+    setLogoutNotice("");
+
+    const storedWallets = getStoredInAppWallets();
+    if (storedWallets.length === 0) {
+      handleOpenRegisterModal();
+      return;
+    }
+
+    const target = storedWallets[0];
+    try {
+      const provider = getSepoliaJsonRpcProvider();
+      const restored = new Wallet(target.privateKey, provider);
+
+      setWalletType("in_app");
+      setInAppWallet(restored);
+      setAccount(restored.address);
+      setAllAccounts(storedWallets.map((w) => w.address));
+      setChainId(SEPOLIA_CONFIG.chainIdHex);
+      fetchAccountData(restored.address, "in_app");
+    } catch (err) {
+      console.error("Reconnect in-app error:", err);
+      setErrorMessage("Could not reconnect stored wallet. Try importing again.");
+    }
+  };
+
+  // Instant Demo: Load 3 Example Demo Accounts
+  const handleLoadExampleAccounts = (): void => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(STORAGE_KEY_DISCONNECTED);
+    }
+    setLogoutNotice("");
+
+    // Populate all 3 example accounts into local in-app wallet list
+    const exampleWallets = PRIVATE_KEY.map((acc, index) => ({
+      address: acc.address,
+      privateKey: acc.privateKey.startsWith("0x") ? acc.privateKey : `0x${acc.privateKey}`,
+      label: acc.label || `Demo Account ${index + 1}`,
+      createdAt: Date.now(),
+    }));
+
+    if (typeof window !== "undefined") {
+      localStorage.setItem("dapp_in_app_wallets", JSON.stringify(exampleWallets));
+      localStorage.setItem(STORAGE_KEY_ACTIVE_ADDR, exampleWallets[0].address);
+    }
+
+    const provider = getSepoliaJsonRpcProvider();
+    const firstWallet = new Wallet(exampleWallets[0].privateKey, provider);
+
+    setWalletType("in_app");
+    setInAppWallet(firstWallet);
+    setAccount(firstWallet.address);
+    setAllAccounts(exampleWallets.map((w) => w.address));
+    setChainId(SEPOLIA_CONFIG.chainIdHex);
+    setBalance(PRIVATE_KEY[0].balance || "1.50");
+    setEnsName(null);
+    setIsModalOpen(false);
+  };
+
+  // Switch / Select active account from connected list
+  const handleSelectConnectedAccount = (selectedAddr: string): void => {
+    if (!selectedAddr) return;
+    setAccount(selectedAddr);
+    setShowSelectedAccountKey(false);
+    setIsKeyConfirmModalOpen(false);
+
+    if (walletType === "in_app") {
+      setActiveInAppWalletAddress(selectedAddr);
+      const stored = getStoredInAppWallets();
+      const matched = stored.find(
+        (w) => w.address.toLowerCase() === selectedAddr.toLowerCase()
+      );
+      if (matched) {
+        try {
+          const provider = getSepoliaJsonRpcProvider();
+          const restored = new Wallet(matched.privateKey, provider);
+          setInAppWallet(restored);
+        } catch (err) {
+          console.warn("Could not load inAppWallet instance:", err);
+        }
+      }
+      fetchAccountData(selectedAddr, "in_app");
+    } else {
+      fetchAccountData(selectedAddr, "metamask");
+    }
+  };
+
+  // Switch or Request Account in MetaMask
+  const handleSwitchAccount = async (): Promise<void> => {
+    if (!window.ethereum) return;
+    try {
+      setIsSwitchingAccount(true);
+      setErrorMessage("");
+
+      try {
+        await window.ethereum.request({
+          method: "wallet_requestPermissions",
+          params: [{ eth_accounts: {} }],
+        });
+      } catch (permError: unknown) {
+        console.warn("wallet_requestPermissions request failed:", permError);
+      }
+
+      const requested = (await window.ethereum.request({
+        method: "eth_requestAccounts",
+      })) as string[];
+
+      const allMetaMaskAccs = await getAllMetaMaskAccounts();
+      const combinedAccounts = Array.from(
+        new Set([...(requested || []), ...allMetaMaskAccs].map((a) => a.toLowerCase()))
+      ).map((lower) => {
+        return (
+          [...(requested || []), ...allMetaMaskAccs].find(
+            (a) => a.toLowerCase() === lower
+          ) || lower
+        );
+      });
+
+      if (combinedAccounts && combinedAccounts.length > 0) {
+        setAllAccounts(combinedAccounts);
+        const newPrimary = requested?.[0] || combinedAccounts[0];
+        setAccount(newPrimary);
+        await fetchAccountData(newPrimary, "metamask");
+      }
+    } catch (err: unknown) {
+      setErrorMessage(parseWalletError(err, "Failed to switch accounts in MetaMask."));
+    } finally {
+      setIsSwitchingAccount(false);
+    }
+  };
+
+  // Disconnect & Log Out
+  const handleDisconnect = (): void => {
+    setAccount("");
+    setAllAccounts([]);
+    setWalletType(null);
+    setInAppWallet(null);
+    setEnsName(null);
+    setBalance("0");
+    setChainId("");
+    setActiveTab("transfer");
+    setErrorMessage("");
+    setShowExportedKey(false);
+    setShowSelectedAccountKey(false);
+    setIsKeyConfirmModalOpen(false);
+
+    if (typeof window !== "undefined") {
+      clearInAppWalletsFromStorage();
+      localStorage.setItem(STORAGE_KEY_DISCONNECTED, "true");
+    }
+
+    setLogoutNotice(
+      "You have logged out and cleared your in-app wallet session. To switch or disconnect your MetaMask account, please open your MetaMask extension and select Disconnect."
+    );
+  };
+
+  // Copy active address to clipboard
+  const handleCopyAddress = async (): Promise<void> => {
+    if (!account) return;
+    try {
+      await navigator.clipboard.writeText(account);
+      setHasCopied(true);
+      setTimeout(() => setHasCopied(false), 2000);
+    } catch (err: unknown) {
+      console.warn("Clipboard write failed:", err);
+    }
+  };
+
+  // Paste recipient address from clipboard
+  const handlePasteRecipient = async (): Promise<void> => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        setRecipient(text.trim());
+      }
+    } catch (err: unknown) {
+      console.warn("Clipboard paste error:", err);
+    }
+  };
+
+  // Handle Transfer Form Submission: Opens Frontend Confirmation Popup
+  const handleOpenTransferConfirm = (e: FormEvent): void => {
+    e.preventDefault();
+    if (!canTransfer) return;
+    setTransferErrorMessage("");
+    setTransferStatus("idle");
+    setTxHash("");
+    setIsConfirmModalOpen(true);
+  };
+
+  // Execute Ether Transfer via Frontend Confirmation Popup
+  const handleExecuteTransfer = async (): Promise<void> => {
+    if (!canTransfer) return;
+
+    try {
+      setIsTransferring(true);
+      setTransferStatus("broadcasting");
+      setTransferErrorMessage("");
+      setTxHash("");
+
+      let effectiveInAppWallet: Wallet | undefined = undefined;
+
+      if (walletType === "in_app" && inAppWallet) {
+        effectiveInAppWallet = inAppWallet;
+      } else {
+        const stored = getStoredInAppWallets();
+        const matched = stored.find(
+          (w) => w.address.toLowerCase() === account.toLowerCase()
+        );
+        if (matched) {
+          effectiveInAppWallet = new Wallet(
+            matched.privateKey,
+            getSepoliaJsonRpcProvider()
+          );
+        } else if (frontendSignerKeyInput.trim()) {
+          const formatted = frontendSignerKeyInput.trim().startsWith("0x")
+            ? frontendSignerKeyInput.trim()
+            : `0x${frontendSignerKeyInput.trim()}`;
+          effectiveInAppWallet = new Wallet(
+            formatted,
+            getSepoliaJsonRpcProvider()
+          );
+        }
+      }
+
+      const confirmedHash = await sendETH(trimmedRecipient, transferAmount.trim(), {
+        inAppWallet: effectiveInAppWallet,
+        onTransactionHash: (hash) => {
+          setTxHash(hash);
+          setTransferStatus("confirming");
+        },
+      });
+
+      setTxHash(confirmedHash);
+      setTransferStatus("success");
+      setRecipient("");
+      setTransferAmount("");
+      setFrontendSignerKeyInput("");
+      setShowFrontendKeyPrompt(false);
+
+      if (account) {
+        await fetchAccountData(account, walletType || "in_app");
+      }
+    } catch (err: unknown) {
+      console.error("Ether transfer failed:", err);
+      setTransferStatus("error");
+      setTransferErrorMessage(
+        parseWalletError(err, "Transaction failed. Please check inputs and gas fees.")
+      );
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  // Quick Amount Selector
+  const handleSetMaxAmount = (): void => {
+    const maxSafe = Math.max(0, numericBalance - 0.002);
+    setTransferAmount(maxSafe > 0 ? maxSafe.toFixed(4) : "0");
+  };
+
+  // 1. Initial Page Load: Check In-App Wallet Storage first, then MetaMask
+  useEffect(() => {
+    const initSavedSession = async (): Promise<void> => {
+      if (
+        typeof window !== "undefined" &&
+        localStorage.getItem(STORAGE_KEY_DISCONNECTED) === "true"
+      ) {
+        return;
+      }
+
+      const storedWallets = getStoredInAppWallets();
+      const storedActive = localStorage.getItem(STORAGE_KEY_ACTIVE_ADDR);
+
+      if (storedWallets.length > 0) {
+        const activeEntry =
+          storedWallets.find((w) => w.address.toLowerCase() === storedActive?.toLowerCase()) ||
+          storedWallets[0];
+
+        try {
+          const provider = getSepoliaJsonRpcProvider();
+          const restoredWallet = new Wallet(activeEntry.privateKey, provider);
+          setWalletType("in_app");
+          setInAppWallet(restoredWallet);
+          setAccount(restoredWallet.address);
+          setAllAccounts(storedWallets.map((w) => w.address));
+          setChainId(SEPOLIA_CONFIG.chainIdHex);
+          await fetchAccountData(restoredWallet.address, "in_app");
+          return;
+        } catch (err) {
+          console.error("Failed to restore in-app wallet:", err);
+        }
+      }
+
+      // Fallback: If no in-app wallet, check MetaMask pre-authorized accounts
+      if (window.ethereum) {
+        try {
+          const accs = await getAllMetaMaskAccounts();
+          if (accs && accs.length > 0) {
+            setWalletType("metamask");
+            setAllAccounts(accs);
+            const initialAccount = accs[0];
+            setAccount(initialAccount);
+
+            const chain = (await window.ethereum.request({ method: "eth_chainId" })) as string;
+            const activeChain = chain.toLowerCase();
+            setChainId(activeChain);
+
+            if (activeChain === SEPOLIA_CONFIG.chainIdHex.toLowerCase()) {
+              await fetchAccountData(initialAccount, "metamask");
+            }
+          }
+        } catch (err: unknown) {
+          console.error("Auto-connect check failed:", err);
+        }
+      }
+    };
+
+    initSavedSession();
+  }, [fetchAccountData]);
+
+  // 2. Listen to MetaMask accountsChanged and chainChanged events
+  useEffect(() => {
+    if (!window.ethereum) return;
+
+    const onAccountsChanged = async (accs: unknown): Promise<void> => {
+      if (
+        typeof window !== "undefined" &&
+        localStorage.getItem(STORAGE_KEY_DISCONNECTED) === "true"
+      ) {
+        return;
+      }
+      if (walletTypeRef.current === "in_app") return;
+
+      const rawAccounts = (accs as string[]) || [];
+      if (!rawAccounts || rawAccounts.length === 0) {
+        setAccount("");
+        setAllAccounts([]);
+        setEnsName(null);
+        setBalance("0");
+        return;
+      }
+
+      const allMetaMaskAccs = await getAllMetaMaskAccounts();
+      const combinedAccounts = Array.from(
+        new Set([...rawAccounts, ...allMetaMaskAccs].map((a) => a.toLowerCase()))
+      ).map((lower) => {
+        return (
+          [...rawAccounts, ...allMetaMaskAccs].find(
+            (a) => a.toLowerCase() === lower
+          ) || lower
+        );
+      });
+
+      setAllAccounts(combinedAccounts.length > 0 ? combinedAccounts : rawAccounts);
+      const activeFromMetaMask = rawAccounts[0];
+      setAccount(activeFromMetaMask);
+
+      window.ethereum
+        ?.request({ method: "eth_chainId" })
+        .then((chain) => {
+          const activeChain = (chain as string).toLowerCase();
+          setChainId(activeChain);
+          if (activeChain === SEPOLIA_CONFIG.chainIdHex.toLowerCase()) {
+            fetchAccountData(activeFromMetaMask, "metamask");
+          }
+        })
+        .catch(console.error);
+    };
+
+    const onChainChanged = (newChainId: unknown): void => {
+      if (walletTypeRef.current === "in_app") return;
+      const parsedChain = (newChainId as string).toLowerCase();
+      setChainId(parsedChain);
+      if (accountRef.current && parsedChain === SEPOLIA_CONFIG.chainIdHex.toLowerCase()) {
+        fetchAccountData(accountRef.current, "metamask");
+      }
+    };
+
+    window.ethereum.on("accountsChanged", onAccountsChanged);
+    window.ethereum.on("chainChanged", onChainChanged);
+
+    return () => {
+      if (window.ethereum) {
+        window.ethereum.removeListener("accountsChanged", onAccountsChanged);
+        window.ethereum.removeListener("chainChanged", onChainChanged);
+      }
+    };
+  }, [fetchAccountData]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+    <div className="min-h-screen bg-slate-100/60 text-slate-800 flex flex-col font-sans selection:bg-orange-100 selection:text-orange-900">
+      {/* Top Navigation Bar */}
+      <Navbar
+        isConnected={isConnected}
+        walletType={walletType}
+        isSepolia={isSepolia}
+        balance={balance}
+        account={account}
+        displayName={displayName}
+        activeTab={activeTab}
+        isLoading={isLoading}
+        hasMetaMask={hasMetaMask}
+        onConnectMetaMask={handleConnectMetaMask}
+        onToggleTab={setActiveTab}
+        onDisconnect={handleDisconnect}
+      />
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8">
+        <div className="w-full max-w-md">
+          {/* Network Switcher Banner if wrong chain */}
+          {isConnected && !isSepolia && walletType === "metamask" && (
+            <div className="mb-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 backdrop-blur-sm flex items-center justify-between gap-3 shadow-sm">
+              <div className="flex items-center gap-2.5 text-xs text-amber-900 font-medium">
+                <span className="text-base shrink-0">⚠️</span>
+                <span>Wallet connected to another network.</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleSwitchToSepolia}
+                disabled={isSwitchingChain}
+                className="rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-amber-700 disabled:opacity-50 transition cursor-pointer shrink-0"
+              >
+                {isSwitchingChain ? "Switching..." : "Switch to Sepolia"}
+              </button>
+            </div>
+          )}
+
+          {/* Logout Notice Banner */}
+          {logoutNotice && !isConnected && (
+            <div className="mb-4 rounded-2xl bg-emerald-50 border border-emerald-200 p-3.5 text-xs text-emerald-900 flex items-center justify-between gap-2 shadow-xs">
+              <span className="leading-relaxed flex-1">{logoutNotice}</span>
+              <button
+                type="button"
+                onClick={() => setLogoutNotice("")}
+                className="text-emerald-700 hover:text-emerald-900 font-bold px-1.5 py-0.5 rounded cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Main Card Container */}
+          <div className="rounded-3xl bg-white p-6 sm:p-7 shadow-xl shadow-slate-200/50 border border-slate-200/80 transition-all">
+            {/* View 1: Not Connected Landing State */}
+            {!isConnected && (
+              <LandingCard
+                isLoading={isLoading}
+                hasMetaMask={hasMetaMask}
+                hasSavedInAppWallets={hasSavedInAppWallets}
+                contractAddress={CONTRACT_ADDRESS}
+                onConnectMetaMask={handleConnectMetaMask}
+                onReconnectSavedInApp={handleReconnectSavedInApp}
+                onLoadExampleAccounts={handleLoadExampleAccounts}
+                onOpenImportModal={() => handleOpenRegisterModal("import")}
+              />
+            )}
+
+            {/* View 2: Send Ether Tab */}
+            {isConnected && activeTab === "transfer" && (
+              <TransferForm
+                walletType={walletType}
+                balance={balance}
+                numericBalance={numericBalance}
+                allAccounts={allAccounts}
+                account={account}
+                onSelectAccount={handleSelectConnectedAccount}
+                recipient={recipient}
+                setRecipient={setRecipient}
+                isValidRecipient={isValidRecipient}
+                isSelfTransfer={isSelfTransfer}
+                transferAmount={transferAmount}
+                setTransferAmount={setTransferAmount}
+                isValidAmount={isValidAmount}
+                numericAmount={numericAmount}
+                canTransfer={canTransfer}
+                isTransferring={isTransferring}
+                transferStatus={transferStatus}
+                txHash={txHash}
+                transferErrorMessage={transferErrorMessage}
+                contractAddress={CONTRACT_ADDRESS}
+                onPasteRecipient={handlePasteRecipient}
+                onSetMaxAmount={handleSetMaxAmount}
+                onSubmit={handleOpenTransferConfirm}
+              />
+            )}
+
+            {/* View 3: Wallet & Accounts Tab */}
+            {isConnected && activeTab === "account" && (
+              <AccountView
+                walletType={walletType}
+                ensName={ensName}
+                displayName={displayName}
+                account={account}
+                accountIndex={accountIndex}
+                selectedAccountPrivateKey={selectedAccountPrivateKey}
+                showSelectedAccountKey={showSelectedAccountKey}
+                setShowSelectedAccountKey={setShowSelectedAccountKey}
+                onOpenKeyConfirmModal={() => setIsKeyConfirmModalOpen(true)}
+                balance={balance}
+                isLoading={isLoading}
+                onRefreshBalance={() => fetchAccountData(account, walletType || "in_app")}
+                hasCopied={hasCopied}
+                onCopyAddress={handleCopyAddress}
+                hasCopiedSelectedKey={hasCopiedSelectedKey}
+                setHasCopiedSelectedKey={setHasCopiedSelectedKey}
+                hasCopiedSelectedKeyRaw={hasCopiedSelectedKeyRaw}
+                setHasCopiedSelectedKeyRaw={setHasCopiedSelectedKeyRaw}
+                inAppWallet={inAppWallet}
+                showExportedKey={showExportedKey}
+                setShowExportedKey={setShowExportedKey}
+                hasCopiedExportedKey={hasCopiedExportedKey}
+                setHasCopiedExportedKey={setHasCopiedExportedKey}
+                hasCopiedExportedKeyRaw={hasCopiedExportedKeyRaw}
+                setHasCopiedExportedKeyRaw={setHasCopiedExportedKeyRaw}
+                allAccounts={allAccounts}
+                onSelectAccount={handleSelectConnectedAccount}
+                isSwitchingAccount={isSwitchingAccount}
+                onSwitchAccount={handleSwitchAccount}
+                onOpenRegisterModal={() => handleOpenRegisterModal("register")}
+                onDisconnect={handleDisconnect}
+              />
+            )}
+          </div>
+
+          {/* Global Alert Notification */}
+          {errorMessage && (
+            <div className="mt-4 rounded-2xl bg-red-50 border border-red-200 p-3.5 text-xs text-red-700 flex items-start gap-2">
+              <span className="font-bold shrink-0">⚠️</span>
+              <p className="flex-1 leading-relaxed">{errorMessage}</p>
+            </div>
+          )}
         </div>
       </main>
+
+      {/* Dynamic Modal 1: Frontend Confirm Reveal Private Key Popup Modal */}
+      <KeyRevealConfirmModal
+        isOpen={isKeyConfirmModalOpen}
+        account={account}
+        accountIndex={accountIndex}
+        onClose={() => setIsKeyConfirmModalOpen(false)}
+        onConfirm={() => {
+          setShowSelectedAccountKey(true);
+          setIsKeyConfirmModalOpen(false);
+        }}
+      />
+
+      {/* Dynamic Modal 2: Frontend Transfer Confirmation Popup Modal */}
+      <TransferConfirmModal
+        isOpen={isConfirmModalOpen}
+        isTransferring={isTransferring}
+        transferStatus={transferStatus}
+        txHash={txHash}
+        transferAmount={transferAmount}
+        displayName={displayName}
+        account={account}
+        trimmedRecipient={trimmedRecipient}
+        contractAddress={CONTRACT_ADDRESS}
+        selectedAccountPrivateKey={selectedAccountPrivateKey}
+        showTransferConfirmKey={showTransferConfirmKey}
+        setShowTransferConfirmKey={setShowTransferConfirmKey}
+        walletType={walletType}
+        frontendSignerKeyInput={frontendSignerKeyInput}
+        setFrontendSignerKeyInput={setFrontendSignerKeyInput}
+        showFrontendKeyPrompt={showFrontendKeyPrompt}
+        setShowFrontendKeyPrompt={setShowFrontendKeyPrompt}
+        transferErrorMessage={transferErrorMessage}
+        onClose={() => {
+          setIsConfirmModalOpen(false);
+          if (transferStatus === "success") {
+            setTransferStatus("idle");
+            setTxHash("");
+          }
+        }}
+        onExecuteTransfer={handleExecuteTransfer}
+      />
+
+      {/* Dynamic Modal 3: Frontend Registration & Connect Modal */}
+      <WalletModal
+        isOpen={isModalOpen}
+        modalTab={modalTab}
+        setModalTab={setModalTab}
+        modalNotice={modalNotice}
+        regStep={regStep}
+        setRegStep={setRegStep}
+        regPassword={regPassword}
+        setRegPassword={setRegPassword}
+        regConfirmPassword={regConfirmPassword}
+        setRegConfirmPassword={setRegConfirmPassword}
+        showRegPassword={showRegPassword}
+        setShowRegPassword={setShowRegPassword}
+        regPasswordError={regPasswordError}
+        setRegPasswordError={setRegPasswordError}
+        isEncrypting={isEncrypting}
+        draftWallet={draftWallet}
+        setDraftWallet={setDraftWallet}
+        hasDownloadedKeystore={hasDownloadedKeystore}
+        setHasDownloadedKeystore={setHasDownloadedKeystore}
+        hasBackedUpKey={hasBackedUpKey}
+        setHasBackedUpKey={setHasBackedUpKey}
+        showDraftPrivateKey={showDraftPrivateKey}
+        setShowDraftPrivateKey={setShowDraftPrivateKey}
+        hasCopiedDraftAddress={hasCopiedDraftAddress}
+        setHasCopiedDraftAddress={setHasCopiedDraftAddress}
+        hasCopiedDraftKey={hasCopiedDraftKey}
+        setHasCopiedDraftKey={setHasCopiedDraftKey}
+        hasCopiedDraftKeyRaw={hasCopiedDraftKeyRaw}
+        setHasCopiedDraftKeyRaw={setHasCopiedDraftKeyRaw}
+        hasCopiedDraftSeed={hasCopiedDraftSeed}
+        setHasCopiedDraftSeed={setHasCopiedDraftSeed}
+        hasCopiedPassword={hasCopiedPassword}
+        setHasCopiedPassword={setHasCopiedPassword}
+        showAlternativeBackup={showAlternativeBackup}
+        setShowAlternativeBackup={setShowAlternativeBackup}
+        importMode={importMode}
+        setImportMode={setImportMode}
+        importKeyInput={importKeyInput}
+        setImportKeyInput={setImportKeyInput}
+        importKeystoreInput={importKeystoreInput}
+        setImportKeystoreInput={setImportKeystoreInput}
+        importPasswordInput={importPasswordInput}
+        setImportPasswordInput={setImportPasswordInput}
+        importError={importError}
+        setImportError={setImportError}
+        isLoading={isLoading}
+        hasMetaMask={hasMetaMask}
+        onClose={() => setIsModalOpen(false)}
+        onGenerateWalletWithPassword={handleGenerateAndEncryptWallet}
+        onLoadExampleAccounts={handleLoadExampleAccounts}
+        onConfirmRegisterInAppWallet={handleConfirmRegisterInAppWallet}
+        onImportPrivateKey={handleImportPrivateKey}
+        onImportKeystore={handleImportKeystore}
+        onConnectMetaMask={handleConnectMetaMask}
+      />
+
+      {/* Footer */}
+      <footer className="py-4 text-center text-xs text-slate-400">
+        Wallet Transfer DApp • Sepolia Testnet
+      </footer>
     </div>
   );
 }
