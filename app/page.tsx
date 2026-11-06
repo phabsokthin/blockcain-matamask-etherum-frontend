@@ -14,7 +14,6 @@ import { BrowserProvider, formatEther, isAddress, Wallet } from "ethers";
 import { CONTRACT_ADDRESS, getSepoliaJsonRpcProvider } from "./lib/contract";
 import { sendETH } from "./lib/contractActions";
 import {
-  DraftWalletInfo,
   EthereumRpcError,
   PRIVATE_KEY,
   SEPOLIA_CONFIG,
@@ -98,41 +97,10 @@ export default function Home() {
   const [frontendSignerKeyInput, setFrontendSignerKeyInput] = useState<string>("");
   const [showFrontendKeyPrompt, setShowFrontendKeyPrompt] = useState<boolean>(false);
 
-  // Frontend Registration / Connect Modal State
+  // Import Private Key Modal State
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
-  const [modalTab, setModalTab] = useState<"register" | "import" | "metamask">("register");
-  const [modalNotice, setModalNotice] = useState<string>("");
-  const [draftWallet, setDraftWallet] = useState<DraftWalletInfo | null>(null);
-
-  // Registration with Password State (MetaMask Keystore compatible)
-  const [regStep, setRegStep] = useState<"password" | "ready">("password");
-  const [regPassword, setRegPassword] = useState<string>("");
-  const [regConfirmPassword, setRegConfirmPassword] = useState<string>("");
-  const [showRegPassword, setShowRegPassword] = useState<boolean>(false);
-  const [regPasswordError, setRegPasswordError] = useState<string>("");
-  const [isEncrypting, setIsEncrypting] = useState<boolean>(false);
-  const [hasDownloadedKeystore, setHasDownloadedKeystore] = useState<boolean>(false);
-  const [showAlternativeBackup, setShowAlternativeBackup] = useState<boolean>(true);
-
-  const [hasBackedUpKey, setHasBackedUpKey] = useState<boolean>(false);
-  const [showDraftPrivateKey, setShowDraftPrivateKey] = useState<boolean>(false);
-  const [hasCopiedDraftAddress, setHasCopiedDraftAddress] = useState<boolean>(false);
-  const [hasCopiedDraftKey, setHasCopiedDraftKey] = useState<boolean>(false);
-  const [hasCopiedDraftKeyRaw, setHasCopiedDraftKeyRaw] = useState<boolean>(false);
-  const [hasCopiedDraftSeed, setHasCopiedDraftSeed] = useState<boolean>(false);
-  const [hasCopiedPassword, setHasCopiedPassword] = useState<boolean>(false);
-
-  // Import Tab State
-  const [importMode, setImportMode] = useState<"key" | "keystore">("key");
   const [importKeyInput, setImportKeyInput] = useState<string>("");
-  const [importKeystoreInput, setImportKeystoreInput] = useState<string>("");
-  const [importPasswordInput, setImportPasswordInput] = useState<string>("");
   const [importError, setImportError] = useState<string>("");
-
-  // Export Key State in Wallet Tab
-  const [showExportedKey, setShowExportedKey] = useState<boolean>(false);
-  const [hasCopiedExportedKey, setHasCopiedExportedKey] = useState<boolean>(false);
-  const [hasCopiedExportedKeyRaw, setHasCopiedExportedKeyRaw] = useState<boolean>(false);
 
   // Show/Hide Private Key State for Selected Account with Confirmation
   const [showSelectedAccountKey, setShowSelectedAccountKey] = useState<boolean>(false);
@@ -278,30 +246,12 @@ export default function Home() {
     }
   }, []);
 
-  // Open the registration / connection modal
-  const handleOpenRegisterModal = useCallback(
-    (
-      defaultTab: "register" | "import" | "metamask" = "register",
-      notice: string = ""
-    ) => {
-      setModalTab(defaultTab);
-      setModalNotice(notice);
-      setRegStep("password");
-      setRegPassword("");
-      setRegConfirmPassword("");
-      setRegPasswordError("");
-      setImportError("");
-      setImportKeyInput("");
-      setImportKeystoreInput("");
-      setImportPasswordInput("");
-      setDraftWallet(null);
-      setHasDownloadedKeystore(false);
-      setHasBackedUpKey(false);
-      setShowDraftPrivateKey(false);
-      setIsModalOpen(true);
-    },
-    []
-  );
+  // Open the import private key modal
+  const handleOpenImportModal = useCallback(() => {
+    setImportError("");
+    setImportKeyInput("");
+    setIsModalOpen(true);
+  }, []);
 
   // Connect MetaMask wallet
   const handleConnectMetaMask = useCallback(async (): Promise<void> => {
@@ -368,84 +318,6 @@ export default function Home() {
     }
   }, [fetchAccountData, handleSwitchToSepolia]);
 
-  // Complete In-App Registration from frontend popup
-  const handleConfirmRegisterInAppWallet = useCallback((): void => {
-    if (!draftWallet) return;
-
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(STORAGE_KEY_DISCONNECTED);
-    }
-
-    try {
-      const provider = getSepoliaJsonRpcProvider();
-      const newWallet = new Wallet(draftWallet.privateKey, provider);
-
-      saveInAppWalletToStorage({
-        address: draftWallet.address,
-        privateKey: draftWallet.privateKey,
-        label: `Frontend Wallet ${getStoredInAppWallets().length + 1}`,
-        createdAt: Date.now(),
-        keystoreJson: draftWallet.keystoreJson,
-      });
-
-      const updatedStored = getStoredInAppWallets();
-      setAllAccounts(updatedStored.map((w) => w.address));
-
-      setWalletType("in_app");
-      setInAppWallet(newWallet);
-      setAccount(newWallet.address);
-      setChainId(SEPOLIA_CONFIG.chainIdHex);
-      setEnsName(null);
-      setBalance("0");
-      setIsModalOpen(false);
-      setDraftWallet(null);
-      setLogoutNotice("");
-
-      fetchAccountData(newWallet.address, "in_app");
-    } catch (err: unknown) {
-      console.error("Failed to connect registered wallet:", err);
-      setErrorMessage(parseWalletError(err, "Failed to initialize new wallet."));
-    }
-  }, [draftWallet, fetchAccountData]);
-
-  // Generate and encrypt new wallet with password
-  const handleGenerateAndEncryptWallet = async (e: FormEvent): Promise<void> => {
-    e.preventDefault();
-    if (!regPassword || regPassword.length < 6) {
-      setRegPasswordError("Password must be at least 6 characters.");
-      return;
-    }
-    if (regPassword !== regConfirmPassword) {
-      setRegPasswordError("Passwords do not match. Please verify.");
-      return;
-    }
-
-    try {
-      setIsEncrypting(true);
-      setRegPasswordError("");
-
-      await new Promise((resolve) => setTimeout(resolve, 80));
-
-      const randomWallet = Wallet.createRandom();
-      const keystoreJson = await randomWallet.encrypt(regPassword);
-
-      setDraftWallet({
-        address: randomWallet.address,
-        privateKey: randomWallet.privateKey,
-        mnemonic: randomWallet.mnemonic?.phrase,
-        keystoreJson,
-        password: regPassword,
-      });
-
-      setRegStep("ready");
-    } catch (err: unknown) {
-      console.error("Keystore encryption failed:", err);
-      setRegPasswordError("Failed to encrypt wallet. Please try another password.");
-    } finally {
-      setIsEncrypting(false);
-    }
-  };
-
   // Import raw private key
   const handleImportPrivateKey = (): void => {
     const trimmed = importKeyInput.trim();
@@ -490,62 +362,6 @@ export default function Home() {
     }
   };
 
-  // Import Keystore JSON + Password
-  const handleImportKeystore = async (): Promise<void> => {
-    const trimmedJson = importKeystoreInput.trim();
-    const trimmedPass = importPasswordInput;
-
-    if (!trimmedJson) {
-      setImportError("Please paste your Keystore JSON content.");
-      return;
-    }
-    if (!trimmedPass) {
-      setImportError("Please enter the password for this Keystore file.");
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      setImportError("");
-
-      const provider = getSepoliaJsonRpcProvider();
-      const decrypted = await Wallet.fromEncryptedJson(trimmedJson, trimmedPass);
-      const connected = new Wallet(decrypted.privateKey, provider);
-
-      if (typeof window !== "undefined") {
-        localStorage.removeItem(STORAGE_KEY_DISCONNECTED);
-      }
-
-      saveInAppWalletToStorage({
-        address: connected.address,
-        privateKey: connected.privateKey,
-        label: `Keystore Wallet ${getStoredInAppWallets().length + 1}`,
-        createdAt: Date.now(),
-        keystoreJson: trimmedJson,
-      });
-
-      const updatedStored = getStoredInAppWallets();
-      setAllAccounts(updatedStored.map((w) => w.address));
-
-      setWalletType("in_app");
-      setInAppWallet(connected);
-      setAccount(connected.address);
-      setChainId(SEPOLIA_CONFIG.chainIdHex);
-      setEnsName(null);
-      setIsModalOpen(false);
-      setImportKeystoreInput("");
-      setImportPasswordInput("");
-      setLogoutNotice("");
-
-      fetchAccountData(connected.address, "in_app");
-    } catch (err: unknown) {
-      console.error("Keystore decrypt error:", err);
-      setImportError("Incorrect password or corrupted Keystore JSON file.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   // Reconnect saved in-app wallet from browser storage
   const handleReconnectSavedInApp = (): void => {
     if (typeof window !== "undefined") {
@@ -555,7 +371,7 @@ export default function Home() {
 
     const storedWallets = getStoredInAppWallets();
     if (storedWallets.length === 0) {
-      handleOpenRegisterModal();
+      handleOpenImportModal();
       return;
     }
 
@@ -583,7 +399,6 @@ export default function Home() {
     }
     setLogoutNotice("");
 
-    // Populate all 3 example accounts into local in-app wallet list
     const exampleWallets = PRIVATE_KEY.map((acc, index) => ({
       address: acc.address,
       privateKey: acc.privateKey.startsWith("0x") ? acc.privateKey : `0x${acc.privateKey}`,
@@ -692,7 +507,6 @@ export default function Home() {
     setChainId("");
     setActiveTab("transfer");
     setErrorMessage("");
-    setShowExportedKey(false);
     setShowSelectedAccountKey(false);
     setIsKeyConfirmModalOpen(false);
 
@@ -702,7 +516,7 @@ export default function Home() {
     }
 
     setLogoutNotice(
-      "You have logged out and cleared your in-app wallet session. To switch or disconnect your MetaMask account, please open your MetaMask extension and select Disconnect."
+      "You have logged out and cleared your session. To switch or disconnect your MetaMask account, please open your MetaMask extension and select Disconnect."
     );
   };
 
@@ -1004,7 +818,7 @@ export default function Home() {
                 onConnectMetaMask={handleConnectMetaMask}
                 onReconnectSavedInApp={handleReconnectSavedInApp}
                 onLoadExampleAccounts={handleLoadExampleAccounts}
-                onOpenImportModal={() => handleOpenRegisterModal("import")}
+                onOpenImportModal={handleOpenImportModal}
               />
             )}
 
@@ -1058,18 +872,11 @@ export default function Home() {
                 setHasCopiedSelectedKey={setHasCopiedSelectedKey}
                 hasCopiedSelectedKeyRaw={hasCopiedSelectedKeyRaw}
                 setHasCopiedSelectedKeyRaw={setHasCopiedSelectedKeyRaw}
-                inAppWallet={inAppWallet}
-                showExportedKey={showExportedKey}
-                setShowExportedKey={setShowExportedKey}
-                hasCopiedExportedKey={hasCopiedExportedKey}
-                setHasCopiedExportedKey={setHasCopiedExportedKey}
-                hasCopiedExportedKeyRaw={hasCopiedExportedKeyRaw}
-                setHasCopiedExportedKeyRaw={setHasCopiedExportedKeyRaw}
                 allAccounts={allAccounts}
                 onSelectAccount={handleSelectConnectedAccount}
                 isSwitchingAccount={isSwitchingAccount}
                 onSwitchAccount={handleSwitchAccount}
-                onOpenRegisterModal={() => handleOpenRegisterModal("register")}
+                onOpenImportModal={handleOpenImportModal}
                 onDisconnect={handleDisconnect}
               />
             )}
@@ -1127,62 +934,16 @@ export default function Home() {
         onExecuteTransfer={handleExecuteTransfer}
       />
 
-      {/* Dynamic Modal 3: Frontend Registration & Connect Modal */}
+      {/* Dynamic Modal 3: Import Private Key Modal */}
       <WalletModal
         isOpen={isModalOpen}
-        modalTab={modalTab}
-        setModalTab={setModalTab}
-        modalNotice={modalNotice}
-        regStep={regStep}
-        setRegStep={setRegStep}
-        regPassword={regPassword}
-        setRegPassword={setRegPassword}
-        regConfirmPassword={regConfirmPassword}
-        setRegConfirmPassword={setRegConfirmPassword}
-        showRegPassword={showRegPassword}
-        setShowRegPassword={setShowRegPassword}
-        regPasswordError={regPasswordError}
-        setRegPasswordError={setRegPasswordError}
-        isEncrypting={isEncrypting}
-        draftWallet={draftWallet}
-        setDraftWallet={setDraftWallet}
-        hasDownloadedKeystore={hasDownloadedKeystore}
-        setHasDownloadedKeystore={setHasDownloadedKeystore}
-        hasBackedUpKey={hasBackedUpKey}
-        setHasBackedUpKey={setHasBackedUpKey}
-        showDraftPrivateKey={showDraftPrivateKey}
-        setShowDraftPrivateKey={setShowDraftPrivateKey}
-        hasCopiedDraftAddress={hasCopiedDraftAddress}
-        setHasCopiedDraftAddress={setHasCopiedDraftAddress}
-        hasCopiedDraftKey={hasCopiedDraftKey}
-        setHasCopiedDraftKey={setHasCopiedDraftKey}
-        hasCopiedDraftKeyRaw={hasCopiedDraftKeyRaw}
-        setHasCopiedDraftKeyRaw={setHasCopiedDraftKeyRaw}
-        hasCopiedDraftSeed={hasCopiedDraftSeed}
-        setHasCopiedDraftSeed={setHasCopiedDraftSeed}
-        hasCopiedPassword={hasCopiedPassword}
-        setHasCopiedPassword={setHasCopiedPassword}
-        showAlternativeBackup={showAlternativeBackup}
-        setShowAlternativeBackup={setShowAlternativeBackup}
-        importMode={importMode}
-        setImportMode={setImportMode}
         importKeyInput={importKeyInput}
         setImportKeyInput={setImportKeyInput}
-        importKeystoreInput={importKeystoreInput}
-        setImportKeystoreInput={setImportKeystoreInput}
-        importPasswordInput={importPasswordInput}
-        setImportPasswordInput={setImportPasswordInput}
         importError={importError}
         setImportError={setImportError}
-        isLoading={isLoading}
-        hasMetaMask={hasMetaMask}
         onClose={() => setIsModalOpen(false)}
-        onGenerateWalletWithPassword={handleGenerateAndEncryptWallet}
-        onLoadExampleAccounts={handleLoadExampleAccounts}
-        onConfirmRegisterInAppWallet={handleConfirmRegisterInAppWallet}
         onImportPrivateKey={handleImportPrivateKey}
-        onImportKeystore={handleImportKeystore}
-        onConnectMetaMask={handleConnectMetaMask}
+        onLoadExampleAccounts={handleLoadExampleAccounts}
       />
 
       {/* Footer */}

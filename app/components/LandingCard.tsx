@@ -27,7 +27,7 @@ export function LandingCard({
   return (
     <div className="text-center space-y-6">
       <div className="space-y-2">
-        <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-orange-500 via-amber-500 to-yellow-400 mx-auto flex items-center justify-center shadow-lg shadow-orange-500/20 text-3xl font-extrabold text-white">
+        <div className="w-16 h-16 rounded-3xl bg-linear-to-tr from-orange-500 via-amber-500 to-yellow-400 mx-auto flex items-center justify-center shadow-lg shadow-orange-500/20 text-3xl font-extrabold text-white">
           ⚡
         </div>
         <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
@@ -45,7 +45,7 @@ export function LandingCard({
           type="button"
           onClick={onConnectMetaMask}
           disabled={isLoading}
-          className="w-full p-4 rounded-2xl bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 text-white shadow-lg shadow-orange-500/20 hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] transition-all cursor-pointer flex items-center justify-between group"
+          className="w-full p-4 rounded-2xl bg-linear-to-r from-orange-500 via-amber-500 to-yellow-500 text-white shadow-lg shadow-orange-500/20 hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] transition-all cursor-pointer flex items-center justify-between group"
         >
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white font-bold text-lg">

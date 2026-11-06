@@ -39,15 +39,6 @@ export interface SavedInAppWallet {
   privateKey: string;
   label?: string;
   createdAt: number;
-  keystoreJson?: string;
-}
-
-export interface DraftWalletInfo {
-  address: string;
-  privateKey: string;
-  mnemonic?: string;
-  keystoreJson?: string;
-  password?: string;
 }
 
 export const SEPOLIA_CONFIG: NetworkConfig = {
@@ -89,28 +80,6 @@ export const PRIVATE_KEY = [
     privateKey: "0cf74b9425423c56a253852e3b263c2b8880be6d9cc3b662234f7a2a0cf151fc",
   },
 ] as const;
-
-/**
- * Downloads standard Ethereum Keystore V3 JSON file
- */
-export function downloadKeystoreJson(address: string, jsonString: string): void {
-  if (typeof window === "undefined" || !jsonString) return;
-  try {
-    const blob = new Blob([jsonString], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const cleanAddress = address.toLowerCase().replace(/^0x/, "");
-    anchor.href = url;
-    anchor.download = `UTC--${timestamp}--${cleanAddress}.json`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
-  } catch (err) {
-    console.error("Keystore download failed:", err);
-  }
-}
 
 /**
  * Storage helpers
@@ -321,4 +290,3 @@ export function subscribeStorage(callback: () => void): () => void {
     window.removeEventListener("storage", callback);
   };
 }
-

@@ -1,12 +1,9 @@
 "use client";
 
 import React from "react";
-import { Wallet } from "ethers";
 import {
   formatEthBalance,
   truncateAddress,
-  getStoredInAppWallets,
-  downloadKeystoreJson,
 } from "../types/wallet";
 
 interface AccountViewProps {
@@ -28,18 +25,11 @@ interface AccountViewProps {
   setHasCopiedSelectedKey: (val: boolean) => void;
   hasCopiedSelectedKeyRaw: boolean;
   setHasCopiedSelectedKeyRaw: (val: boolean) => void;
-  inAppWallet: Wallet | null;
-  showExportedKey: boolean;
-  setShowExportedKey: (val: boolean) => void;
-  hasCopiedExportedKey: boolean;
-  setHasCopiedExportedKey: (val: boolean) => void;
-  hasCopiedExportedKeyRaw: boolean;
-  setHasCopiedExportedKeyRaw: (val: boolean) => void;
   allAccounts: string[];
   onSelectAccount: (acc: string) => void;
   isSwitchingAccount: boolean;
   onSwitchAccount: () => void;
-  onOpenRegisterModal: () => void;
+  onOpenImportModal: () => void;
   onDisconnect: () => void;
 }
 
@@ -62,18 +52,11 @@ export function AccountView({
   setHasCopiedSelectedKey,
   hasCopiedSelectedKeyRaw,
   setHasCopiedSelectedKeyRaw,
-  inAppWallet,
-  showExportedKey,
-  setShowExportedKey,
-  hasCopiedExportedKey,
-  setHasCopiedExportedKey,
-  hasCopiedExportedKeyRaw,
-  setHasCopiedExportedKeyRaw,
   allAccounts,
   onSelectAccount,
   isSwitchingAccount,
   onSwitchAccount,
-  onOpenRegisterModal,
+  onOpenImportModal,
   onDisconnect,
 }: AccountViewProps) {
   return (
@@ -159,7 +142,7 @@ export function AccountView({
                 <span className="text-[10px] text-slate-400">
                   Private key for selected Account {accountIndex + 1} ({truncateAddress(account, 6, 4)})
                 </span>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     type="button"
                     onClick={async () => {
@@ -213,95 +196,6 @@ export function AccountView({
         </button>
       </div>
 
-      {/* Export Private Key & Download Keystore (In-App Wallet Only) */}
-      {walletType === "in_app" && inAppWallet && (
-        <div className="rounded-2xl bg-purple-50/60 p-4 border border-purple-200/80 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-purple-900">
-              <span>🔐</span>
-              <span>Account Keys & MetaMask Import</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowExportedKey(!showExportedKey)}
-              className="text-xs font-semibold text-purple-700 hover:text-purple-900 cursor-pointer"
-            >
-              {showExportedKey ? "Hide Keys" : "Reveal Keys"}
-            </button>
-          </div>
-
-          {/* Keystore Download if saved */}
-          {(() => {
-            const storedWallets = getStoredInAppWallets();
-            const currentEntry = storedWallets.find(
-              (w) => w.address.toLowerCase() === account.toLowerCase()
-            );
-            if (currentEntry?.keystoreJson) {
-              return (
-                <div className="p-3 bg-white rounded-xl border border-purple-200 flex items-center justify-between gap-2">
-                  <div>
-                    <span className="font-bold text-xs text-purple-950 block">
-                      MetaMask Keystore File (.json)
-                    </span>
-                    <span className="text-[10px] text-purple-600 block">
-                      Encrypted with your password. Import into MetaMask anytime.
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      downloadKeystoreJson(account, currentEntry.keystoreJson!)
-                    }
-                    className="text-xs font-bold text-purple-800 bg-purple-100 hover:bg-purple-200 px-3 py-1.5 rounded-xl border border-purple-300 transition cursor-pointer flex-shrink-0"
-                  >
-                    ⬇️ Download
-                  </button>
-                </div>
-              );
-            }
-            return null;
-          })()}
-
-          {showExportedKey && (
-            <div className="space-y-2 pt-1">
-              <div className="bg-white p-2.5 rounded-xl border border-purple-200 font-mono text-[10px] text-purple-950 break-all select-all">
-                {inAppWallet.privateKey}
-              </div>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
-                <span className="text-[10px] text-purple-700">
-                  Tip: In MetaMask, paste 64-char key (without 0x) to avoid format errors.
-                </span>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const raw = inAppWallet.privateKey.replace(/^0x/, "");
-                      await navigator.clipboard.writeText(raw);
-                      setHasCopiedExportedKeyRaw(true);
-                      setTimeout(() => setHasCopiedExportedKeyRaw(false), 2000);
-                    }}
-                    className="text-xs font-bold text-purple-800 bg-white hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg cursor-pointer transition shadow-2xs"
-                  >
-                    {hasCopiedExportedKeyRaw ? "✓ Copied 64-char" : "Copy (without 0x)"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      await navigator.clipboard.writeText(inAppWallet.privateKey);
-                      setHasCopiedExportedKey(true);
-                      setTimeout(() => setHasCopiedExportedKey(false), 2000);
-                    }}
-                    className="text-xs font-bold text-purple-800 bg-purple-100 hover:bg-purple-200 px-2.5 py-1 rounded-lg cursor-pointer transition"
-                  >
-                    {hasCopiedExportedKey ? "✓ Copied Key" : "Copy (with 0x)"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Account Switcher Header & Action */}
       <div className="pt-2">
         <div className="flex items-center justify-between mb-2">
@@ -312,7 +206,7 @@ export function AccountView({
             type="button"
             onClick={() => {
               if (walletType === "in_app") {
-                onOpenRegisterModal();
+                onOpenImportModal();
               } else {
                 onSwitchAccount();
               }
@@ -321,7 +215,7 @@ export function AccountView({
             className="text-xs font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
           >
             {walletType === "in_app"
-              ? "+ Register / Import New"
+              ? "+ Import Private Key"
               : isSwitchingAccount
               ? "Opening..."
               : "+ Connect / Switch Accounts in MetaMask"}
@@ -338,7 +232,7 @@ export function AccountView({
                   key={acc}
                   type="button"
                   onClick={() => onSelectAccount(acc)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 border flex-shrink-0 ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 border shrink-0 ${
                     isCurrent
                       ? "bg-purple-600 text-white border-purple-600 shadow-sm"
                       : "bg-white hover:bg-slate-100 text-slate-700 border-slate-200"
@@ -371,7 +265,7 @@ export function AccountView({
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <span
-                    className={`w-3.5 h-3.5 rounded-full flex items-center justify-center flex-shrink-0 border ${
+                    className={`w-3.5 h-3.5 rounded-full flex items-center justify-center shrink-0 border ${
                       isCurrent
                         ? "border-emerald-600 bg-emerald-600"
                         : "border-slate-300 bg-white"
@@ -459,4 +353,3 @@ export function AccountView({
 }
 
 export default AccountView;
-
